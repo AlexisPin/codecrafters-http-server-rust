@@ -9,7 +9,6 @@ use tokio::{
 struct Request {
     method: String,
     path: Vec<String>,
-    version: String,
     headers: HashMap<String, String>,
 }
 
@@ -33,7 +32,6 @@ fn parse_request(buffer: &[u8]) -> anyhow::Result<Request> {
 
     let method = parts.next().unwrap_or_default().to_string();
     let path = parts.next().unwrap_or_default().to_string();
-    let version = parts.next().unwrap_or_default().to_string();
 
     let path = path.splitn(3, '/').map(|s| s.to_string()).skip(1).collect();
 
@@ -49,7 +47,6 @@ fn parse_request(buffer: &[u8]) -> anyhow::Result<Request> {
     Ok(Request {
         method,
         path,
-        version,
         headers,
     })
 }
