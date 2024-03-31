@@ -45,8 +45,16 @@ async fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
 
     match request.method.as_str() {
         "GET" => {
-            let response = format!("HTTP/1.1 200 OK\r\n\r\n");
-            stream.write_all(response.as_bytes()).await?;
+            match request.path.as_str() {
+                "/" => {
+                    let response = format!("HTTP/1.1 200 OK\r\n\r\nHello, World!");
+                    stream.write_all(response.as_bytes()).await?;
+                }
+                _ => {
+                    let response = format!("HTTP/1.1 404 NOT FOUND\r\n\r\n");
+                    stream.write_all(response.as_bytes()).await?;
+                }
+            }
         }
         _ => {}
     }
