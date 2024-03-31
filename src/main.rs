@@ -24,6 +24,8 @@ async fn main() -> anyhow::Result<()> {
 fn parse_request(buffer: &[u8]) -> anyhow::Result<Request> {
     let request = String::from_utf8(buffer.to_vec())?;
 
+    println!("Request: {}", request);
+
     let request = request.trim();
     let mut parts = request.split_whitespace();
 
@@ -45,9 +47,20 @@ async fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
 
     match request.method.as_str() {
         "GET" => {
-            match request.path.as_str() {
-                "/" => {
-                    let response = format!("HTTP/1.1 200 OK\r\n\r\nHello, World!");
+            match request
+                .path
+                .as_str()
+                .split("/")
+                .collect::<Vec<&str>>()
+                .as_slice()
+            {
+                ["", ""] => {
+                    let response = format!("HTTP/1.1 200 OK\r\n\r\n");
+                    stream.write_all(response.as_bytes()).await?;
+                }
+                //regex match echo/<string>
+                ["", "echo", rest] => {
+                    let response = format!("HTTP/1.1 200 OK\r\n\r\n{}", rest);
                     stream.write_all(response.as_bytes()).await?;
                 }
                 _ => {
