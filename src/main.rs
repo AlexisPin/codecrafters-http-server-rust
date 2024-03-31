@@ -1,22 +1,55 @@
-// Uncomment this block to pass the first stage
-use std::net::TcpListener;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+};
 
-fn main() {
-    // You can use print statements as follows for debugging, they'll be visible when running tests.
-    println!("Logs from your program will appear here!");
+#[derive(Debug)]
+struct Request {
+    method: String,
+    path: String,
+    version: String,
+}
 
-    // Uncomment this block to pass the first stage
-    //
-    let listener = TcpListener::bind("127.0.0.1:4221").unwrap();
-    
-    for stream in listener.incoming() {
-        match stream {
-            Ok(_stream) => {
-                println!("accepted new connection");
-            }
-            Err(e) => {
-                println!("error: {}", e);
-            }
-        }
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let listener = TcpListener::bind("127.0.0.1:4221").await?;
+
+    loop {
+        let (socket, adrr) = listener.accept().await?;
+        println!("Accepted connection from: {}", adrr);
+        tokio::spawn(async move { handle_connection(socket).await });
     }
+}
+
+fn parse_request(buffer: &[u8]) -> anyhow::Result<Request> {
+    let request = String::from_utf8(buffer.to_vec())?;
+
+    let request = request.trim();
+    let mut parts = request.split_whitespace();
+
+    let method = parts.next().unwrap_or_default().to_string();
+    let path = parts.next().unwrap_or_default().to_string();
+    let version = parts.next().unwrap_or_default().to_string();
+
+    Ok(Request {
+        method,
+        path,
+        version,
+    })
+}
+
+async fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
+    let mut buffer = [0; 1024];
+    let len = stream.read(&mut buffer).await?;
+    let request = parse_request(&buffer[..len])?;
+
+    match request.method.as_str() {
+        "GET" => {
+            let response = format!("HTTP/1.1 200 OK\r\n\r\n");
+            stream.write_all(response.as_bytes()).await?;
+        }
+        _ => {}
+    }
+
+    Ok(())
 }
