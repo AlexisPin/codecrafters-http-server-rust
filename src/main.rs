@@ -52,7 +52,11 @@ async fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
                 stream.write_all(response.as_bytes()).await?;
             }
             "echo" => {
-                let response = format!("HTTP/1.1 200 OK\r\n\r\n{}", request.path.get(1).unwrap());
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
+                    request.path.get(1).unwrap().len(),
+                    request.path.get(1).unwrap()
+                );
                 stream.write_all(response.as_bytes()).await?;
             }
             _ => {
