@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -8,6 +10,7 @@ struct Request {
     method: String,
     path: Vec<String>,
     version: String,
+    headers: HashMap<String, String>,
 }
 
 #[tokio::main]
@@ -24,6 +27,7 @@ async fn main() -> anyhow::Result<()> {
 fn parse_request(buffer: &[u8]) -> anyhow::Result<Request> {
     let request = String::from_utf8(buffer.to_vec())?;
 
+    let mut headers = HashMap::new();
     let request = request.trim();
     let mut parts = request.split_whitespace();
 
@@ -33,10 +37,20 @@ fn parse_request(buffer: &[u8]) -> anyhow::Result<Request> {
 
     let path = path.splitn(3, '/').map(|s| s.to_string()).skip(1).collect();
 
+    let user_agent = parts
+        .skip_while(|&s| s != "User-Agent:")
+        .skip(1)
+        .next()
+        .unwrap_or_default()
+        .to_string();
+
+    headers.insert("User-Agent".to_string(), user_agent);
+
     Ok(Request {
         method,
         path,
         version,
+        headers,
     })
 }
 
@@ -56,6 +70,14 @@ async fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
                     "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
                     request.path.get(1).unwrap().len(),
                     request.path.get(1).unwrap()
+                );
+                stream.write_all(response.as_bytes()).await?;
+            }
+            "user-agent" => {
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
+                    request.headers.get("User-Agent").unwrap().len(),
+                    request.headers.get("User-Agent").unwrap()
                 );
                 stream.write_all(response.as_bytes()).await?;
             }
