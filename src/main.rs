@@ -6,7 +6,7 @@ use tokio::{
 #[derive(Debug)]
 struct Request {
     method: String,
-    path: String,
+    path: Vec<String>,
     version: String,
 }
 
@@ -24,14 +24,14 @@ async fn main() -> anyhow::Result<()> {
 fn parse_request(buffer: &[u8]) -> anyhow::Result<Request> {
     let request = String::from_utf8(buffer.to_vec())?;
 
-    println!("Request: {}", request);
-
     let request = request.trim();
     let mut parts = request.split_whitespace();
 
     let method = parts.next().unwrap_or_default().to_string();
     let path = parts.next().unwrap_or_default().to_string();
     let version = parts.next().unwrap_or_default().to_string();
+
+    let path = path.splitn(3, '/').map(|s| s.to_string()).skip(1).collect();
 
     Ok(Request {
         method,
@@ -46,29 +46,20 @@ async fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
     let request = parse_request(&buffer[..len])?;
 
     match request.method.as_str() {
-        "GET" => {
-            match request
-                .path
-                .as_str()
-                .split("/")
-                .collect::<Vec<&str>>()
-                .as_slice()
-            {
-                ["", ""] => {
-                    let response = format!("HTTP/1.1 200 OK\r\n\r\n");
-                    stream.write_all(response.as_bytes()).await?;
-                }
-                //regex match echo/<string>
-                ["", "echo", rest] => {
-                    let response = format!("HTTP/1.1 200 OK\r\n\r\n{}", rest);
-                    stream.write_all(response.as_bytes()).await?;
-                }
-                _ => {
-                    let response = format!("HTTP/1.1 404 NOT FOUND\r\n\r\n");
-                    stream.write_all(response.as_bytes()).await?;
-                }
+        "GET" => match request.path.get(0).unwrap().as_str() {
+            "" => {
+                let response = format!("HTTP/1.1 200 OK\r\n\r\n");
+                stream.write_all(response.as_bytes()).await?;
             }
-        }
+            "echo" => {
+                let response = format!("HTTP/1.1 200 OK\r\n\r\n{}", request.path.get(1).unwrap());
+                stream.write_all(response.as_bytes()).await?;
+            }
+            _ => {
+                let response = format!("HTTP/1.1 404 NOT FOUND\r\n\r\n");
+                stream.write_all(response.as_bytes()).await?;
+            }
+        },
         _ => {}
     }
 
