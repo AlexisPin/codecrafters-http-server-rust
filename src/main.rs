@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use clap::Parser;
+use clap::{arg, command};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -11,15 +13,25 @@ struct Request {
     path: Vec<String>,
     headers: HashMap<String, String>,
 }
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+pub struct Args {
+    #[arg(short, long)]
+    directory: Option<String>,
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let listener = TcpListener::bind("127.0.0.1:4221").await?;
+    let cli = Args::parse();
 
+    let directory = cli.directory;
+
+    let listener = TcpListener::bind("127.0.0.1:4221").await?;
     loop {
+        let directory = directory.clone();
         let (socket, adrr) = listener.accept().await?;
         println!("Accepted connection from: {}", adrr);
-        tokio::spawn(async move { handle_connection(socket).await });
+        tokio::spawn(async move { handle_connection(socket, directory).await });
     }
 }
 
@@ -51,7 +63,33 @@ fn parse_request(buffer: &[u8]) -> anyhow::Result<Request> {
     })
 }
 
-async fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
+fn respond_with_content(content: &str, content_type: &str) -> String {
+    format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\n\r\n{}",
+        content_type,
+        content.len(),
+        content
+    )
+}
+
+fn respond_with_404() -> String {
+    "HTTP/1.1 404 NOT FOUND\r\n\r\n".to_string()
+}
+
+fn handle_files_request(directory: String, filename: &str) -> anyhow::Result<String> {
+    let path = std::path::Path::new(&directory).join(filename);
+
+    let response = if path.exists() {
+        let content = std::fs::read_to_string(path)?;
+        respond_with_content(&content, "application/octet-stream")
+    } else {
+        respond_with_404()
+    };
+
+    Ok(response)
+}
+
+async fn handle_connection(mut stream: TcpStream, directory: Option<String>) -> anyhow::Result<()> {
     let mut buffer = [0; 1024];
     let len = stream.read(&mut buffer).await?;
     let request = parse_request(&buffer[..len])?;
@@ -63,25 +101,25 @@ async fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
                 stream.write_all(response.as_bytes()).await?;
             }
             "echo" => {
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
-                    request.path.get(1).unwrap().len(),
-                    request.path.get(1).unwrap()
-                );
+                let response = respond_with_content(request.path.get(1).unwrap_or(&"".to_string()), "text/plain");
                 stream.write_all(response.as_bytes()).await?;
             }
             "user-agent" => {
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
-                    request.headers.get("User-Agent").unwrap().len(),
-                    request.headers.get("User-Agent").unwrap()
-                );
+                let response =
+                    respond_with_content(request.headers.get("User-Agent").unwrap(), "text/plain");
                 stream.write_all(response.as_bytes()).await?;
             }
-            _ => {
-                let response = format!("HTTP/1.1 404 NOT FOUND\r\n\r\n");
+            "files" => {
+                let response = match directory {
+                    Some(directory) => handle_files_request(
+                        directory,
+                        request.path.get(1).unwrap_or(&"".to_string()),
+                    )?,
+                    None => respond_with_404(),
+                };
                 stream.write_all(response.as_bytes()).await?;
             }
+            _ => stream.write_all(respond_with_404().as_bytes()).await?,
         },
         _ => {}
     }
