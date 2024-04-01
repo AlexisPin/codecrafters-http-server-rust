@@ -79,10 +79,9 @@ fn parse_request(buffer: &[u8]) -> anyhow::Result<Request> {
 
     headers.insert("User-Agent".to_string(), user_agent.clone());
 
-    let body = parts
-        .skip_while(|&s| s != "Content-Length:")
-        .skip(2)
-        .next()
+    let body = request
+        .split("\r\n\r\n")
+        .last()
         .unwrap_or_default()
         .to_string();
 
