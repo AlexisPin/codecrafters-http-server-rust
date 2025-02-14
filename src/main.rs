@@ -8,6 +8,9 @@ use tokio::{
     net::{TcpListener, TcpStream},
 };
 
+const CRLF: &str = "\r\n";
+const SUPPORT_ENCODING: [&str; 1] = ["gzip"];
+
 #[derive(Debug)]
 enum Method {
     GET,
@@ -62,28 +65,27 @@ fn parse_request(buffer: &[u8]) -> anyhow::Result<Request> {
 
     let mut headers = HashMap::new();
     let request = request.trim();
-    let mut parts = request.split_ascii_whitespace();
+    let mut parts = request.split(CRLF);
 
-    let method = Method::from_str(parts.next().unwrap_or_default());
-    let path = parts.next().unwrap_or_default().to_string();
+    let start_line = parts.next().unwrap_or_default();
+    let mut start_parts = start_line.split_whitespace();
 
+    let method = Method::from_str(start_parts.next().unwrap_or_default());
+    let path = start_parts.next().unwrap_or_default();
     let path = path.splitn(3, '/').map(|s| s.to_string()).skip(1).collect();
 
-    let user_agent = parts
-        .clone()
-        .skip_while(|&s| s != "User-Agent:")
-        .skip(1)
-        .next()
-        .unwrap_or_default()
-        .to_string();
-
-    headers.insert("User-Agent".to_string(), user_agent.clone());
-
-    let body = request
-        .split("\r\n\r\n")
-        .last()
-        .unwrap_or_default()
-        .to_string();
+    let mut body = String::new();
+    while let Some(line) = parts.next() {
+        if line.is_empty() {
+            body = parts.to_owned().collect::<Vec<&str>>().join(CRLF);
+            break;
+        }
+        let mut parts = line.split(": ");
+        headers.insert(
+            parts.next().unwrap_or_default().to_string(),
+            parts.next().unwrap_or_default().to_string(),
+        );
+    }
 
     Ok(Request {
         method,
@@ -93,11 +95,11 @@ fn parse_request(buffer: &[u8]) -> anyhow::Result<Request> {
     })
 }
 
-fn response_with_content(content: &str, content_type: &str, code: u8) -> String {
+fn response_with_content(content: &str, headers: &str, code: u8) -> String {
     format!(
-        "HTTP/1.1 {} OK\r\nContent-Type: {}\r\nContent-Length: {}\r\n\r\n{}",
+        "HTTP/1.1 {} OK\r\n{}\r\nContent-Length: {}\r\n\r\n{}",
         code,
-        content_type,
+        headers,
         content.len(),
         content
     )
@@ -112,7 +114,8 @@ fn handle_get_files_request(directory: String, filename: &str) -> anyhow::Result
 
     let response = if path.exists() {
         let content = std::fs::read_to_string(path)?;
-        response_with_content(&content, "application/octet-stream", 200)
+        let headers = "Content-Type: application/octet-stream";
+        response_with_content(&content, headers, 200)
     } else {
         response_with_404()
     };
@@ -132,7 +135,8 @@ fn handle_post_files_request(
     } else {
         let mut file = std::fs::File::create(path)?;
         file.write_all(body.as_bytes())?;
-        response_with_content("Created", "text/plain", 201)
+        let headers = "Content-Type: text/plain";
+        response_with_content("Created", headers, 201)
     };
 
     Ok(response)
@@ -150,9 +154,17 @@ async fn handle_connection(mut stream: TcpStream, directory: Option<String>) -> 
                 stream.write_all(response.as_bytes()).await?;
             }
             "echo" => {
+                let mut headers = "Content-Type: text/plain\r\n".to_string();
+                if let Some(accept_encoding) = request.headers.get("Accept-Encoding") {
+                    if SUPPORT_ENCODING.contains(&accept_encoding.as_str()) {
+                        headers.push_str(
+                            format!("Content-Encoding: {}\r\n", accept_encoding).as_str(),
+                        );
+                    }
+                }
                 let response = response_with_content(
                     request.path.get(1).unwrap_or(&"".to_string()),
-                    "text/plain",
+                    &headers,
                     200,
                 );
                 stream.write_all(response.as_bytes()).await?;
@@ -160,7 +172,7 @@ async fn handle_connection(mut stream: TcpStream, directory: Option<String>) -> 
             "user-agent" => {
                 let response = response_with_content(
                     request.headers.get("User-Agent").unwrap(),
-                    "text/plain",
+                    "Content-Type: text/plain",
                     200,
                 );
                 stream.write_all(response.as_bytes()).await?;
